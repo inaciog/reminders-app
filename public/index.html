@@ -893,6 +893,25 @@
   </style>
 </head>
 <body>
+  <script>
+    // Check for token in URL or localStorage before app loads
+    (function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get('token');
+      const storedToken = localStorage.getItem('auth_token');
+      
+      // If token in URL, store it
+      if (urlToken) {
+        localStorage.setItem('auth_token', urlToken);
+        // Remove token from URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+      
+      // Set token for API calls
+      window.AUTH_TOKEN = urlToken || storedToken;
+    })();
+  </script>
+
   <div class="app">
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
@@ -1121,11 +1140,22 @@
     // API Calls
     async function loadData() {
       try {
+        const headers = {};
+        if (window.AUTH_TOKEN) {
+          headers['Authorization'] = `Bearer ${window.AUTH_TOKEN}`;
+        }
+        
         const [foldersRes, remindersRes, tagsRes] = await Promise.all([
-          fetch('/api/folders'),
-          fetch('/api/reminders'),
-          fetch('/api/tags')
+          fetch('/api/folders', { headers }),
+          fetch('/api/reminders', { headers }),
+          fetch('/api/tags', { headers })
         ]);
+        
+        // If unauthorized, redirect to auth service
+        if (foldersRes.status === 401 || remindersRes.status === 401) {
+          redirectToAuth();
+          return;
+        }
         
         folders = await foldersRes.json();
         reminders = await remindersRes.json();
@@ -1138,12 +1168,31 @@
         populateFolderSelect();
       } catch (err) {
         console.error('Failed to load data:', err);
+        redirectToAuth();
       }
+    }
+
+    function redirectToAuth() {
+      const currentUrl = encodeURIComponent(window.location.href);
+      window.location.href = `https://inacio-auth.fly.dev/login?returnTo=${currentUrl}`;
+    }
+
+    // Helper to get auth headers
+    function authHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      if (window.AUTH_TOKEN) {
+        headers['Authorization'] = `Bearer ${window.AUTH_TOKEN}`;
+      }
+      return headers;
     }
 
     async function loadStats() {
       try {
-        const res = await fetch('/api/stats');
+        const res = await fetch('/api/stats', { headers: authHeaders() });
+        if (res.status === 401) {
+          redirectToAuth();
+          return;
+        }
         stats = await res.json();
         if (document.getElementById('stats-panel').style.display !== 'none') {
           renderStats();
@@ -1305,7 +1354,7 @@
 
       await fetch('/api/reminders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(reminder)
       });
 
@@ -1454,7 +1503,7 @@
       
       await fetch('/api/bulk', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ action: 'complete', ids: Array.from(selectedIds) })
       });
       
@@ -1468,7 +1517,7 @@
       
       await fetch('/api/bulk', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ action: 'delete', ids: Array.from(selectedIds) })
       });
       
@@ -1483,7 +1532,7 @@
 
       await fetch(`/api/reminders/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ completed: !r.completed })
       });
 
@@ -1635,16 +1684,18 @@
         return;
       }
 
+      const headers = authHeaders();
+
       if (id) {
         await fetch(`/api/reminders/${id}`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(reminder)
         });
       } else {
         await fetch('/api/reminders', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(reminder)
         });
       }
@@ -1659,7 +1710,7 @@
       
       if (!confirm('Delete this reminder?')) return;
       
-      await fetch(`/api/reminders/${id}`, { method: 'DELETE' });
+      await fetch(`/api/reminders/${id}`, { method: 'DELETE', headers: authHeaders() });
       closeReminderModal();
       await loadData();
     }
@@ -1686,7 +1737,7 @@
 
       await fetch('/api/folders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ name, color, icon: '📁' })
       });
 
@@ -1773,6 +1824,24 @@
         startY = e.touches[0].clientY;
       }
     }, { passive: true });
+  </script>
+  <script>
+    // Check for token in URL or localStorage before app loads
+    (function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get('token');
+      const storedToken = localStorage.getItem('auth_token');
+      
+      // If token in URL, store it
+      if (urlToken) {
+        localStorage.setItem('auth_token', urlToken);
+        // Remove token from URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+      
+      // Set token for API calls
+      window.AUTH_TOKEN = urlToken || storedToken;
+    })();
   </script>
 </body>
 </html>

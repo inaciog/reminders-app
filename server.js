@@ -161,7 +161,7 @@ app.use(cookieParser());
 
 // Auth middleware - verify with auth-service
 async function requireAuth(req, res, next) {
-  let token = req.query.token || req.cookies[COOKIE_NAME];
+  let token = req.query.token || req.cookies[COOKIE_NAME] || req.headers.authorization?.replace('Bearer ', '');
   
   if (req.query.token && !req.cookies[COOKIE_NAME]) {
     res.cookie(COOKIE_NAME, req.query.token, {
