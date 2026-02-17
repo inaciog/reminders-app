@@ -3,6 +3,7 @@
  * 
  * A fast, elegant reminders system with folders and sub-tasks.
  * Uses JSON file for persistent storage.
+ * Requires authentication via auth-service.
  * 
  * @author Inacio Bo
  * @license MIT
@@ -12,9 +13,14 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+// Auth config
+const AUTH_SERVICE = process.env.AUTH_SERVICE || 'https://inacio-auth.fly.dev';
+const COOKIE_NAME = 'auth_session';
 
 // Data file path
 const DATA_FILE = '/data/reminders.json';
@@ -70,7 +76,54 @@ setInterval(saveData, 30000);
 
 // Middleware
 app.use(express.json());
-app.use(express.static('public'));
+app.use(cookieParser());
+
+// Auth middleware - verify with auth-service
+async function requireAuth(req, res, next) {
+  const token = req.cookies[COOKIE_NAME];
+  
+  if (!token) {
+    // Check if this is an API request or page request
+    if (req.path.startsWith('/api/')) {
+      return res.status(401).json({ 
+        error: 'Not authenticated',
+        loginUrl: `${AUTH_SERVICE}/login?returnTo=${encodeURIComponent(`https://reminders-app.fly.dev${req.originalUrl}`)}`
+      });
+    }
+    return res.redirect(`${AUTH_SERVICE}/login?returnTo=${encodeURIComponent(`https://reminders-app.fly.dev${req.originalUrl}`)}`);
+  }
+  
+  try {
+    // Verify with auth-service
+    const fetch = (await import('node-fetch')).default;
+    const response = await fetch(`${AUTH_SERVICE}/api/verify`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Cookie': `${COOKIE_NAME}=${token}`
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error('Invalid token');
+    }
+    
+    const data = await response.json();
+    req.user = data.user;
+    next();
+  } catch (err) {
+    if (req.path.startsWith('/api/')) {
+      return res.status(401).json({ 
+        error: 'Not authenticated',
+        loginUrl: `${AUTH_SERVICE}/login?returnTo=${encodeURIComponent(`https://reminders-app.fly.dev${req.originalUrl}`)}`
+      });
+    }
+    return res.redirect(`${AUTH_SERVICE}/login?returnTo=${encodeURIComponent(`https://reminders-app.fly.dev${req.originalUrl}`)}`);
+  }
+}
+
+// Apply auth to all routes except static files
+app.use('/api', requireAuth);
+app.use('/', requireAuth, express.static('public'));
 
 // ============================================================================
 // API Routes - Folders
@@ -316,10 +369,46 @@ app.delete('/api/reminders/:id/subtasks/:subId', (req, res) => {
 });
 
 // ============================================================================
-// HTML Routes
+// Special endpoint for AI assistant to create reminders
 // ============================================================================
 
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+const API_SECRET = process.env.API_SECRET || 'assistant-secret-key';
+
+app.post('/api/external/reminder', (req, res) => {
+  const { secret, title, notes = '', dueDate = null, priority = 'normal' } = req.body;
+  
+  if (secret !== API_SECRET) {
+    return res.status(401).json({ error: 'Invalid secret' });
+  }
+  
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'Title required' });
+  }
+  
+  const id = uuidv4().slice(0, 8);
+  const reminder = {
+    id,
+    title: title.trim(),
+    notes: notes.trim(),
+    folderId: 'inbox',
+    completed: false,
+    dueDate: dueDate ? new Date(dueDate).getTime() : null,
+    priority,
+    subtasks: [],
+    createdAt: Date.now(),
+    completedAt: null,
+    source: 'assistant'
+  };
+  
+  reminders.set(id, reminder);
+  saveData();
+  
+  res.json({ 
+    success: true, 
+    reminder,
+    url: `https://reminders-app.fly.dev/`
+  });
+});
 
 // ============================================================================
 // Start Server
