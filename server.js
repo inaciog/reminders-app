@@ -82,18 +82,34 @@ function createDefaultFolders() {
   });
 }
 
-// Save data to file
+// Save data to file with backup
 function saveData() {
   try {
     const data = {
       folders: Array.from(folders.entries()),
       reminders: Array.from(reminders.entries()),
-      tags: Array.from(tags.entries())
+      tags: Array.from(tags.entries()),
+      lastSaved: Date.now()
     };
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+    
+    // Trigger async backup
+    backupData();
   } catch (err) {
     console.error('Error saving data:', err);
   }
+}
+
+// Backup data to Dropbox
+function backupData() {
+  const { exec } = require('child_process');
+  exec('./backup.sh', (error, stdout, stderr) => {
+    if (error) {
+      console.error('Backup error:', error);
+    } else {
+      console.log('Backup completed:', stdout.trim());
+    }
+  });
 }
 
 // Extract hashtags from text
@@ -696,6 +712,60 @@ app.get('/api/stats', (req, res) => {
 });
 
 // ============================================================================
+// Backup & Restore API (Owner only)
+// ============================================================================
+
+app.post('/api/backup', async (req, res) => {
+  const { exec } = require('child_process');
+  exec('./backup.sh', (error, stdout, stderr) => {
+    if (error) {
+      console.error('Backup error:', error);
+      return res.status(500).json({ error: 'Backup failed', details: error.message });
+    }
+    res.json({ success: true, message: stdout.trim() });
+  });
+});
+
+app.get('/api/backups', async (req, res) => {
+  try {
+    const { exec } = require('child_process');
+    exec('ls -t /data/backups/reminders_*.json 2>/dev/null | head -20', (error, stdout) => {
+      const files = stdout.trim().split('\n').filter(f => f).map(f => {
+        const name = f.replace('/data/backups/', '');
+        const date = name.replace('reminders_', '').replace('.json', '');
+        return { name, date };
+      });
+      res.json({ success: true, backups: files });
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to list backups' });
+  }
+});
+
+app.post('/api/restore', async (req, res) => {
+  const { backupFile } = req.body;
+  if (!backupFile) {
+    return res.status(400).json({ error: 'Backup file required' });
+  }
+  
+  const filePath = `/data/backups/${backupFile}`;
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Backup file not found' });
+  }
+  
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    folders = new Map(data.folders || []);
+    reminders = new Map(data.reminders || []);
+    tags = new Map(data.tags || []);
+    saveData();
+    res.json({ success: true, message: 'Data restored from backup' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to restore backup', details: err.message });
+  }
+});
+
+// ============================================================================
 // Start Server
 // ============================================================================
 
@@ -703,4 +773,20 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Reminders app on port ${PORT}`);
   // Initial tag update
   updateTags();
+  
+  // Schedule daily full backup at 3 AM
+  const now = new Date();
+  const nextBackup = new Date(now);
+  nextBackup.setHours(3, 0, 0, 0);
+  if (nextBackup <= now) {
+    nextBackup.setDate(nextBackup.getDate() + 1);
+  }
+  const msUntilBackup = nextBackup - now;
+  
+  setTimeout(() => {
+    backupData();
+    setInterval(backupData, 24 * 60 * 60 * 1000); // Daily
+  }, msUntilBackup);
+  
+  console.log(`Next backup scheduled for ${nextBackup.toISOString()}`);
 });
