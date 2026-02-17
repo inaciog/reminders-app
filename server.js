@@ -80,7 +80,19 @@ app.use(cookieParser());
 
 // Auth middleware - verify with auth-service
 async function requireAuth(req, res, next) {
-  const token = req.cookies[COOKIE_NAME];
+  // Check for token in query (from auth service redirect) or cookie
+  let token = req.query.token || req.cookies[COOKIE_NAME];
+  
+  // If token is in query, set it as a cookie for future requests
+  if (req.query.token && !req.cookies[COOKIE_NAME]) {
+    res.cookie(COOKIE_NAME, req.query.token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    });
+    token = req.query.token;
+  }
   
   if (!token) {
     // Check if this is an API request or page request
