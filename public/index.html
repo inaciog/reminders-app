@@ -1841,6 +1841,12 @@
       
       // Set token for API calls
       window.AUTH_TOKEN = urlToken || storedToken;
+      
+      // If no token at all, redirect to auth service immediately
+      if (!window.AUTH_TOKEN) {
+        const currentUrl = encodeURIComponent(window.location.href);
+        window.location.href = `https://inacio-auth.fly.dev/login?returnTo=${currentUrl}`;
+      }
     })();
   </script>
 </body>
