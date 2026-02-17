@@ -738,6 +738,158 @@
     .reminder-item {
       animation: slideIn 0.2s ease-out;
     }
+
+    /* Search Bar */
+    .search-bar {
+      padding: 0 24px 12px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .search-input {
+      flex: 1;
+      background: var(--bg-secondary);
+      border: none;
+      border-radius: var(--radius-xl);
+      padding: 10px 16px;
+      font-size: 15px;
+      color: var(--text-primary);
+      outline: none;
+    }
+
+    .search-input::placeholder {
+      color: var(--text-secondary);
+    }
+
+    /* Tags */
+    .tags-section {
+      padding: 0 24px 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tag-item {
+      padding: 6px 12px;
+      background: var(--bg-secondary);
+      border-radius: var(--radius-xl);
+      font-size: 13px;
+      color: var(--accent-blue);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .tag-item:hover {
+      background: var(--bg-tertiary);
+    }
+
+    .tag-item.active {
+      background: var(--accent-blue);
+      color: white;
+    }
+
+    /* Bulk Actions */
+    .bulk-bar {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-secondary);
+      border-radius: var(--radius-xl);
+      padding: 12px 20px;
+      display: none;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      z-index: 50;
+    }
+
+    .bulk-bar.active {
+      display: flex;
+    }
+
+    .bulk-count {
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .bulk-btn {
+      background: none;
+      border: none;
+      color: var(--accent-blue);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Recurring badge */
+    .recurring-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--accent-purple);
+      margin-left: 8px;
+    }
+
+    /* Checkbox for selection */
+    .select-checkbox {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--text-tertiary);
+      border-radius: 4px;
+      margin-right: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .select-checkbox.selected {
+      background: var(--accent-blue);
+      border-color: var(--accent-blue);
+    }
+
+    .select-checkbox.selected::after {
+      content: '✓';
+      color: white;
+      font-size: 12px;
+    }
+
+    /* Stats panel */
+    .stats-panel {
+      padding: 12px 24px;
+      background: var(--bg-secondary);
+      margin: 0 24px 12px;
+      border-radius: var(--radius-lg);
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+    }
+
+    .stat-value.overdue { color: var(--accent-red); }
+    .stat-value.due-today { color: var(--accent-orange); }
+    .stat-value.high { color: var(--accent-red); }
   </style>
 </head>
 <body>
@@ -785,6 +937,9 @@
           <h1 class="header-title" id="page-title">Today</h1>
         </div>
         <div class="header-actions">
+          <button class="icon-btn" onclick="toggleSearch()" title="Search">🔍</button>
+          <button class="icon-btn" onclick="toggleStats()" title="Stats">📊</button>
+          <button class="icon-btn" onclick="toggleSelectMode()" title="Select">☐</button>
           <button class="icon-btn" onclick="showReminderModal()">+</button>
         </div>
       </div>
@@ -801,8 +956,28 @@
           <button class="meta-btn" onclick="setQuickDate('today')">📅 Today</button>
           <button class="meta-btn" onclick="setQuickDate('tomorrow')">📆 Tomorrow</button>
           <button class="meta-btn" onclick="setQuickDate('week')">📌 This Week</button>
+          <button class="meta-btn" onclick="setQuickRecurring('daily')">🔄 Daily</button>
+          <button class="meta-btn" onclick="setQuickRecurring('weekly')">🔄 Weekly</button>
         </div>
       </div>
+
+      <!-- Search Bar -->
+      <div class="search-bar" id="search-bar" style="display: none;">
+        <input 
+          type="text" 
+          class="search-input" 
+          id="search-input"
+          placeholder="Search reminders..."
+          oninput="handleSearch(this.value)"
+        >
+        <button class="icon-btn" onclick="toggleSearch()">✕</button>
+      </div>
+
+      <!-- Tags Section -->
+      <div class="tags-section" id="tags-section" style="display: none;"></div>
+
+      <!-- Stats Panel -->
+      <div class="stats-panel" id="stats-panel" style="display: none;"></div>
 
       <div class="reminders-list" id="reminders-list">
         <!-- Reminders rendered here -->
@@ -841,12 +1016,23 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Priority</label>
-          <div class="priority-options">
-            <button class="priority-btn" data-priority="low" onclick="setPriority('low')">Low</button>
-            <button class="priority-btn active normal" data-priority="normal" onclick="setPriority('normal')">Normal</button>
-            <button class="priority-btn" data-priority="high" onclick="setPriority('high')">High</button>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Priority</label>
+            <div class="priority-options">
+              <button class="priority-btn" data-priority="low" onclick="setPriority('low')">Low</button>
+              <button class="priority-btn active normal" data-priority="normal" onclick="setPriority('normal')">Normal</button>
+              <button class="priority-btn" data-priority="high" onclick="setPriority('high')">High</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Repeat</label>
+            <select class="form-select" id="reminder-recurring">
+              <option value="">Never</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
           </div>
         </div>
 
@@ -896,36 +1082,75 @@
     </div>
   </div>
 
+  <!-- Bulk Actions Bar -->
+  <div class="bulk-bar" id="bulk-bar">
+    <span class="bulk-count" id="bulk-count">0 selected</span>
+    <button class="bulk-btn" onclick="bulkComplete()">✓ Complete</button>
+    <button class="bulk-btn" onclick="bulkDelete()">🗑 Delete</button>
+    <button class="bulk-btn" onclick="cancelSelection()">Cancel</button>
+  </div>
+
   <script>
     // State
     let currentView = 'today';
     let currentFolder = null;
     let folders = [];
     let reminders = [];
+    let tags = [];
     let quickDate = null;
+    let quickRecurring = null;
     let currentPriority = 'normal';
     let tempSubtasks = [];
+    let searchQuery = '';
+    let selectedTag = null;
+    let selectMode = false;
+    let selectedIds = new Set();
+    let stats = null;
 
     // Init
     document.addEventListener('DOMContentLoaded', () => {
       loadData();
+      loadStats();
       document.getElementById('quick-input').focus();
+      
+      // Periodic refresh
+      setInterval(loadData, 30000);
+      setInterval(loadStats, 60000);
     });
 
     // API Calls
     async function loadData() {
-      const [foldersRes, remindersRes] = await Promise.all([
-        fetch('/api/folders'),
-        fetch('/api/reminders')
-      ]);
-      
-      folders = await foldersRes.json();
-      reminders = await remindersRes.json();
-      
-      renderFolders();
-      renderReminders();
-      updateCounts();
-      populateFolderSelect();
+      try {
+        const [foldersRes, remindersRes, tagsRes] = await Promise.all([
+          fetch('/api/folders'),
+          fetch('/api/reminders'),
+          fetch('/api/tags')
+        ]);
+        
+        folders = await foldersRes.json();
+        reminders = await remindersRes.json();
+        tags = await tagsRes.json();
+        
+        renderFolders();
+        renderReminders();
+        renderTags();
+        updateCounts();
+        populateFolderSelect();
+      } catch (err) {
+        console.error('Failed to load data:', err);
+      }
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        stats = await res.json();
+        if (document.getElementById('stats-panel').style.display !== 'none') {
+          renderStats();
+        }
+      } catch (err) {
+        console.error('Failed to load stats:', err);
+      }
     }
 
     // Rendering
@@ -975,6 +1200,22 @@
         filtered = reminders.filter(r => !r.completed);
       }
 
+      // Filter by search
+      if (searchQuery) {
+        filtered = filtered.filter(r => 
+          r.title.toLowerCase().includes(searchQuery) ||
+          (r.notes && r.notes.toLowerCase().includes(searchQuery))
+        );
+      }
+
+      // Filter by tag
+      if (selectedTag) {
+        filtered = filtered.filter(r => {
+          const text = `${r.title} ${r.notes || ''}`.toLowerCase();
+          return text.includes(selectedTag.toLowerCase());
+        });
+      }
+
       // Sort
       filtered.sort((a, b) => {
         if (a.completed !== b.completed) return a.completed ? 1 : -1;
@@ -1012,6 +1253,8 @@
       if (isOverdue) dateClass = 'overdue';
       else if (isToday) dateClass = 'today';
 
+      const recurringHtml = r.recurring ? `<span class="recurring-badge">🔄 ${r.recurring}</span>` : '';
+      
       const subtasksHtml = r.subtasks?.length > 0 ? `
         <div class="subtasks-preview">
           ${r.subtasks.slice(0, 3).map(st => `
@@ -1021,12 +1264,17 @@
         </div>
       ` : '';
 
+      const selectHtml = selectMode ? `
+        <div class="select-checkbox ${selectedIds.has(r.id) ? 'selected' : ''}" onclick="toggleSelect('${r.id}'); event.stopPropagation();"></div>
+      ` : '';
+
       return `
         <div class="reminder-item ${r.completed ? 'completed' : ''} priority-${r.priority}" data-id="${r.id}">
           <div class="reminder-main">
-            <div class="checkbox ${r.completed ? 'checked' : ''}" onclick="toggleComplete('${r.id}', event)"></div>
-            <div class="reminder-content" onclick="editReminder('${r.id}')">
-              <div class="reminder-title">${escapeHtml(r.title)}</div>
+            ${!selectMode ? `<div class="checkbox ${r.completed ? 'checked' : ''}" onclick="toggleComplete('${r.id}', event)"></div>` : ''}
+            ${selectHtml}
+            <div class="reminder-content" onclick="${selectMode ? `toggleSelect('${r.id}')` : `editReminder('${r.id}')`}">
+              <div class="reminder-title">${escapeHtml(r.title)}${recurringHtml}</div>
               ${r.notes ? `<div style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;">${escapeHtml(r.notes)}</div>` : ''}
               <div class="reminder-meta">
                 ${r.dueDate ? `<span class="reminder-date ${dateClass}">📅 ${dateText}</span>` : ''}
@@ -1051,7 +1299,8 @@
         title,
         folderId: currentFolder || 'inbox',
         dueDate: quickDate,
-        priority: 'normal'
+        priority: 'normal',
+        recurring: quickRecurring
       };
 
       await fetch('/api/reminders', {
@@ -1062,6 +1311,7 @@
 
       input.value = '';
       quickDate = null;
+      quickRecurring = null;
       await loadData();
     }
 
@@ -1082,6 +1332,148 @@
       }
       
       document.getElementById('quick-input').focus();
+    }
+
+    function setQuickRecurring(type) {
+      quickRecurring = type;
+      document.getElementById('quick-input').focus();
+    }
+
+    // Search
+    function toggleSearch() {
+      const bar = document.getElementById('search-bar');
+      const isVisible = bar.style.display !== 'none';
+      bar.style.display = isVisible ? 'none' : 'flex';
+      if (!isVisible) {
+        document.getElementById('search-input').focus();
+      } else {
+        searchQuery = '';
+        document.getElementById('search-input').value = '';
+        renderReminders();
+      }
+    }
+
+    function handleSearch(query) {
+      searchQuery = query.toLowerCase();
+      renderReminders();
+    }
+
+    // Tags
+    function renderTags() {
+      const container = document.getElementById('tags-section');
+      if (tags.length === 0) {
+        container.style.display = 'none';
+        return;
+      }
+      
+      container.innerHTML = tags.slice(0, 15).map(t => `
+        <div class="tag-item ${selectedTag === t.name ? 'active' : ''}" onclick="selectTag('${t.name}')">
+          ${t.name} (${t.count})
+        </div>
+      `).join('');
+    }
+
+    function selectTag(tag) {
+      selectedTag = selectedTag === tag ? null : tag;
+      renderTags();
+      renderReminders();
+    }
+
+    // Stats
+    function toggleStats() {
+      const panel = document.getElementById('stats-panel');
+      const isVisible = panel.style.display !== 'none';
+      panel.style.display = isVisible ? 'none' : 'flex';
+      if (!isVisible && stats) {
+        renderStats();
+      }
+    }
+
+    function renderStats() {
+      if (!stats) return;
+      const panel = document.getElementById('stats-panel');
+      panel.innerHTML = `
+        <div class="stat-item">
+          <span class="stat-value">${stats.total}</span>
+          <span class="stat-label">Total</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value overdue">${stats.overdue}</span>
+          <span class="stat-label">Overdue</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value due-today">${stats.dueToday}</span>
+          <span class="stat-label">Due Today</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value high">${stats.highPriority}</span>
+          <span class="stat-label">High Priority</span>
+        </div>
+      `;
+    }
+
+    // Selection Mode
+    function toggleSelectMode() {
+      selectMode = !selectMode;
+      selectedIds.clear();
+      updateBulkBar();
+      renderReminders();
+    }
+
+    function toggleSelect(id) {
+      if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+      } else {
+        selectedIds.add(id);
+      }
+      updateBulkBar();
+      renderReminders();
+    }
+
+    function updateBulkBar() {
+      const bar = document.getElementById('bulk-bar');
+      const count = document.getElementById('bulk-count');
+      
+      if (selectMode && selectedIds.size > 0) {
+        bar.classList.add('active');
+        count.textContent = `${selectedIds.size} selected`;
+      } else {
+        bar.classList.remove('active');
+      }
+    }
+
+    function cancelSelection() {
+      selectMode = false;
+      selectedIds.clear();
+      updateBulkBar();
+      renderReminders();
+    }
+
+    async function bulkComplete() {
+      if (selectedIds.size === 0) return;
+      
+      await fetch('/api/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'complete', ids: Array.from(selectedIds) })
+      });
+      
+      cancelSelection();
+      await loadData();
+    }
+
+    async function bulkDelete() {
+      if (selectedIds.size === 0) return;
+      if (!confirm(`Delete ${selectedIds.size} reminders?`)) return;
+      
+      await fetch('/api/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', ids: Array.from(selectedIds) })
+      });
+      
+      cancelSelection();
+      await loadData();
     }
 
     async function toggleComplete(id, event) {
@@ -1172,6 +1564,7 @@
       document.getElementById('reminder-title').value = r.title;
       document.getElementById('reminder-notes').value = r.notes || '';
       document.getElementById('reminder-folder').value = r.folderId;
+      document.getElementById('reminder-recurring').value = r.recurring || '';
       
       if (r.dueDate) {
         const d = new Date(r.dueDate);
@@ -1233,6 +1626,7 @@
         folderId: document.getElementById('reminder-folder').value,
         dueDate: document.getElementById('reminder-date').value || null,
         priority: currentPriority,
+        recurring: document.getElementById('reminder-recurring').value || null,
         subtasks: tempSubtasks.filter(st => st.title.trim())
       };
 

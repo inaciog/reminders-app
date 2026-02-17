@@ -1,9 +1,8 @@
 /**
- * Reminders App - Server
+ * Reminders App - Server (Enhanced)
  * 
- * A fast, elegant reminders system with folders and sub-tasks.
- * Uses JSON file for persistent storage.
- * Requires authentication via auth-service.
+ * A fast, elegant reminders system with folders, sub-tasks, tags, recurring reminders,
+ * search, and smart lists.
  * 
  * @author Inacio Bo
  * @license MIT
@@ -28,6 +27,14 @@ const DATA_FILE = '/data/reminders.json';
 // In-memory storage
 let folders = new Map();
 let reminders = new Map();
+let tags = new Map(); // Track tag usage counts
+
+// Recurring reminder intervals (in ms)
+const RECURRING_INTERVALS = {
+  daily: 24 * 60 * 60 * 1000,
+  weekly: 7 * 24 * 60 * 60 * 1000,
+  monthly: 30 * 24 * 60 * 60 * 1000
+};
 
 // Load data from file
 function loadData() {
@@ -36,6 +43,7 @@ function loadData() {
       const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
       folders = new Map(data.folders || []);
       reminders = new Map(data.reminders || []);
+      tags = new Map(data.tags || []);
       console.log('Data loaded from file');
     }
   } catch (err) {
@@ -53,6 +61,25 @@ function loadData() {
     });
     saveData();
   }
+  
+  // Create default smart folders if not exist
+  createDefaultFolders();
+}
+
+// Create default folders
+function createDefaultFolders() {
+  const defaults = [
+    { id: 'today', name: 'Today', color: '#FF3B30', icon: '📅', smart: true, filter: 'today' },
+    { id: 'scheduled', name: 'Scheduled', color: '#FF9500', icon: '📆', smart: true, filter: 'scheduled' },
+    { id: 'all', name: 'All', color: '#5856D6', icon: '📋', smart: true, filter: 'all' },
+    { id: 'completed', name: 'Completed', color: '#34C759', icon: '✅', smart: true, filter: 'completed' }
+  ];
+  
+  defaults.forEach(f => {
+    if (!folders.has(f.id)) {
+      folders.set(f.id, { ...f, createdAt: Date.now() });
+    }
+  });
 }
 
 // Save data to file
@@ -60,11 +87,59 @@ function saveData() {
   try {
     const data = {
       folders: Array.from(folders.entries()),
-      reminders: Array.from(reminders.entries())
+      reminders: Array.from(reminders.entries()),
+      tags: Array.from(tags.entries())
     };
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
   } catch (err) {
     console.error('Error saving data:', err);
+  }
+}
+
+// Extract hashtags from text
+function extractTags(text) {
+  if (!text) return [];
+  const matches = text.match(/#\w+/g);
+  return matches ? matches.map(t => t.toLowerCase()) : [];
+}
+
+// Update tag counts
+function updateTags() {
+  tags.clear();
+  reminders.forEach(r => {
+    const text = `${r.title} ${r.notes || ''}`;
+    const tagList = extractTags(text);
+    tagList.forEach(tag => {
+      tags.set(tag, (tags.get(tag) || 0) + 1);
+    });
+  });
+}
+
+// Process recurring reminders
+function processRecurringReminders() {
+  const now = Date.now();
+  let updated = false;
+  
+  reminders.forEach(r => {
+    if (r.recurring && r.completed && r.completedAt) {
+      const interval = RECURRING_INTERVALS[r.recurring];
+      if (interval && (now - r.completedAt) >= interval) {
+        // Reset the reminder
+        r.completed = false;
+        r.completedAt = null;
+        r.createdAt = now;
+        if (r.dueDate) {
+          // Move due date forward by the interval
+          r.dueDate = r.dueDate + interval;
+        }
+        updated = true;
+        console.log(`Reset recurring reminder: ${r.title}`);
+      }
+    }
+  });
+  
+  if (updated) {
+    saveData();
   }
 }
 
@@ -74,28 +149,31 @@ loadData();
 // Auto-save every 30 seconds
 setInterval(saveData, 30000);
 
+// Process recurring reminders every hour
+setInterval(processRecurringReminders, 60 * 60 * 1000);
+
+// Update tags periodically
+setInterval(updateTags, 5 * 60 * 1000);
+
 // Middleware
 app.use(express.json());
 app.use(cookieParser());
 
 // Auth middleware - verify with auth-service
 async function requireAuth(req, res, next) {
-  // Check for token in query (from auth service redirect) or cookie
   let token = req.query.token || req.cookies[COOKIE_NAME];
   
-  // If token is in query, set it as a cookie for future requests
   if (req.query.token && !req.cookies[COOKIE_NAME]) {
     res.cookie(COOKIE_NAME, req.query.token, {
       httpOnly: true,
       secure: true,
       sameSite: 'none',
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+      maxAge: 30 * 24 * 60 * 60 * 1000
     });
     token = req.query.token;
   }
   
   if (!token) {
-    // Check if this is an API request or page request
     if (req.path.startsWith('/api/')) {
       return res.status(401).json({ 
         error: 'Not authenticated',
@@ -106,7 +184,6 @@ async function requireAuth(req, res, next) {
   }
   
   try {
-    // Verify with auth-service
     const fetch = (await import('node-fetch')).default;
     const response = await fetch(`${AUTH_SERVICE}/api/verify`, {
       headers: {
@@ -115,9 +192,7 @@ async function requireAuth(req, res, next) {
       }
     });
     
-    if (!response.ok) {
-      throw new Error('Invalid token');
-    }
+    if (!response.ok) throw new Error('Invalid token');
     
     const data = await response.json();
     req.user = data.user;
@@ -141,7 +216,7 @@ const API_SECRET = process.env.API_SECRET || 'assistant-secret-key';
 
 // Create reminder
 app.post('/api/external/reminder', (req, res) => {
-  const { secret, title, notes = '', dueDate = null, priority = 'normal' } = req.body;
+  const { secret, title, notes = '', dueDate = null, priority = 'normal', recurring = null } = req.body;
   
   if (secret !== API_SECRET) {
     return res.status(401).json({ error: 'Invalid secret' });
@@ -160,6 +235,7 @@ app.post('/api/external/reminder', (req, res) => {
     completed: false,
     dueDate: dueDate ? new Date(dueDate).getTime() : null,
     priority,
+    recurring: recurring || null, // daily, weekly, monthly
     subtasks: [],
     createdAt: Date.now(),
     completedAt: null,
@@ -167,6 +243,7 @@ app.post('/api/external/reminder', (req, res) => {
   };
   
   reminders.set(id, reminder);
+  updateTags();
   saveData();
   
   res.json({ 
@@ -178,7 +255,7 @@ app.post('/api/external/reminder', (req, res) => {
 
 // List all reminders
 app.get('/api/external/reminders', (req, res) => {
-  const { secret, folder, completed, today } = req.query;
+  const { secret, folder, completed, today, tag, search } = req.query;
   
   if (secret !== API_SECRET) {
     return res.status(401).json({ error: 'Invalid secret' });
@@ -212,6 +289,23 @@ app.get('/api/external/reminders', (req, res) => {
     });
   }
   
+  // Filter by tag
+  if (tag) {
+    list = list.filter(r => {
+      const text = `${r.title} ${r.notes || ''}`.toLowerCase();
+      return text.includes(tag.toLowerCase());
+    });
+  }
+  
+  // Search
+  if (search) {
+    const query = search.toLowerCase();
+    list = list.filter(r => {
+      return r.title.toLowerCase().includes(query) || 
+             (r.notes && r.notes.toLowerCase().includes(query));
+    });
+  }
+  
   // Sort: incomplete first, then by priority, then by due date
   list.sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
@@ -228,8 +322,92 @@ app.get('/api/external/reminders', (req, res) => {
   res.json({
     success: true,
     count: list.length,
-    reminders: list
+    reminders: list,
+    tags: Array.from(tags.entries()).sort((a, b) => b[1] - a[1]).slice(0, 20)
   });
+});
+
+// Get stats
+app.get('/api/external/stats', (req, res) => {
+  const { secret } = req.query;
+  
+  if (secret !== API_SECRET) {
+    return res.status(401).json({ error: 'Invalid secret' });
+  }
+  
+  const all = Array.from(reminders.values());
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  
+  const stats = {
+    total: all.length,
+    completed: all.filter(r => r.completed).length,
+    incomplete: all.filter(r => !r.completed).length,
+    dueToday: all.filter(r => {
+      if (r.completed || !r.dueDate) return false;
+      const due = new Date(r.dueDate);
+      return due >= now && due < tomorrow;
+    }).length,
+    overdue: all.filter(r => {
+      if (r.completed || !r.dueDate) return false;
+      const due = new Date(r.dueDate);
+      return due < now;
+    }).length,
+    highPriority: all.filter(r => !r.completed && r.priority === 'high').length,
+    withDueDate: all.filter(r => !r.completed && r.dueDate).length,
+    tags: Array.from(tags.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10)
+  };
+  
+  res.json({ success: true, stats });
+});
+
+// Bulk operations
+app.post('/api/external/bulk', (req, res) => {
+  const { secret, action, ids } = req.body;
+  
+  if (secret !== API_SECRET) {
+    return res.status(401).json({ error: 'Invalid secret' });
+  }
+  
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'No IDs provided' });
+  }
+  
+  let updated = 0;
+  
+  ids.forEach(id => {
+    const r = reminders.get(id);
+    if (!r) return;
+    
+    switch (action) {
+      case 'complete':
+        r.completed = true;
+        r.completedAt = Date.now();
+        updated++;
+        break;
+      case 'uncomplete':
+        r.completed = false;
+        r.completedAt = null;
+        updated++;
+        break;
+      case 'delete':
+        reminders.delete(id);
+        updated++;
+        break;
+      case 'move':
+        if (req.body.folderId) {
+          r.folderId = req.body.folderId;
+          updated++;
+        }
+        break;
+    }
+  });
+  
+  if (updated > 0) saveData();
+  
+  res.json({ success: true, updated });
 });
 
 // Apply auth to all routes except static files
@@ -240,13 +418,11 @@ app.use('/', requireAuth, express.static('public'));
 // API Routes - Folders
 // ============================================================================
 
-/** GET /api/folders - List all folders */
 app.get('/api/folders', (req, res) => {
   const list = Array.from(folders.values()).sort((a, b) => a.createdAt - b.createdAt);
   res.json(list);
 });
 
-/** POST /api/folders - Create new folder */
 app.post('/api/folders', (req, res) => {
   const { name, color = '#007AFF', icon = '📁' } = req.body;
   
@@ -268,7 +444,6 @@ app.post('/api/folders', (req, res) => {
   res.json(folder);
 });
 
-/** DELETE /api/folders/:id - Delete folder (move reminders to inbox) */
 app.delete('/api/folders/:id', (req, res) => {
   const { id } = req.params;
   
@@ -276,7 +451,6 @@ app.delete('/api/folders/:id', (req, res) => {
     return res.status(400).json({ error: 'Cannot delete inbox' });
   }
   
-  // Move reminders to inbox
   reminders.forEach(r => {
     if (r.folderId === id) {
       r.folderId = 'inbox';
@@ -292,9 +466,8 @@ app.delete('/api/folders/:id', (req, res) => {
 // API Routes - Reminders
 // ============================================================================
 
-/** GET /api/reminders - List reminders */
 app.get('/api/reminders', (req, res) => {
-  const { folder, completed } = req.query;
+  const { folder, completed, tag, search } = req.query;
   let list = Array.from(reminders.values());
   
   if (folder) {
@@ -306,7 +479,21 @@ app.get('/api/reminders', (req, res) => {
     list = list.filter(r => r.completed === isCompleted);
   }
   
-  // Sort
+  if (tag) {
+    list = list.filter(r => {
+      const text = `${r.title} ${r.notes || ''}`.toLowerCase();
+      return text.includes(tag.toLowerCase());
+    });
+  }
+  
+  if (search) {
+    const query = search.toLowerCase();
+    list = list.filter(r => {
+      return r.title.toLowerCase().includes(query) || 
+             (r.notes && r.notes.toLowerCase().includes(query));
+    });
+  }
+  
   list.sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
     if (a.priority !== b.priority) {
@@ -322,7 +509,6 @@ app.get('/api/reminders', (req, res) => {
   res.json(list);
 });
 
-/** GET /api/reminders/today - Get today's reminders */
 app.get('/api/reminders/today', (req, res) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -340,23 +526,14 @@ app.get('/api/reminders/today', (req, res) => {
   res.json(list);
 });
 
-/** GET /api/reminders/:id - Get single reminder */
 app.get('/api/reminders/:id', (req, res) => {
   const r = reminders.get(req.params.id);
   if (!r) return res.status(404).json({ error: 'Not found' });
   res.json(r);
 });
 
-/** POST /api/reminders - Create new reminder */
 app.post('/api/reminders', (req, res) => {
-  const { 
-    title, 
-    notes = '', 
-    folderId = 'inbox',
-    dueDate = null,
-    priority = 'normal',
-    subtasks = []
-  } = req.body;
+  const { title, notes = '', folderId = 'inbox', dueDate = null, priority = 'normal', recurring = null, subtasks = [] } = req.body;
   
   if (!title || !title.trim()) {
     return res.status(400).json({ error: 'Title required' });
@@ -371,6 +548,7 @@ app.post('/api/reminders', (req, res) => {
     completed: false,
     dueDate: dueDate ? new Date(dueDate).getTime() : null,
     priority,
+    recurring: recurring || null,
     subtasks: subtasks.map((st, i) => ({
       id: `${id}-sub-${i}`,
       title: st.title ? st.title.trim() : '',
@@ -381,22 +559,23 @@ app.post('/api/reminders', (req, res) => {
   };
   
   reminders.set(id, reminder);
+  updateTags();
   saveData();
   res.json(reminder);
 });
 
-/** PATCH /api/reminders/:id - Update reminder */
 app.patch('/api/reminders/:id', (req, res) => {
   const r = reminders.get(req.params.id);
   if (!r) return res.status(404).json({ error: 'Not found' });
   
-  const { title, notes, folderId, dueDate, priority, completed, subtasks } = req.body;
+  const { title, notes, folderId, dueDate, priority, completed, recurring, subtasks } = req.body;
   
   if (title !== undefined) r.title = title.trim();
   if (notes !== undefined) r.notes = notes.trim();
   if (folderId !== undefined) r.folderId = folderId;
   if (dueDate !== undefined) r.dueDate = dueDate ? new Date(dueDate).getTime() : null;
   if (priority !== undefined) r.priority = priority;
+  if (recurring !== undefined) r.recurring = recurring;
   
   if (completed !== undefined && completed !== r.completed) {
     r.completed = completed;
@@ -411,72 +590,109 @@ app.patch('/api/reminders/:id', (req, res) => {
     })).filter(st => st.title);
   }
   
+  updateTags();
   saveData();
   res.json(r);
 });
 
-/** DELETE /api/reminders/:id - Delete reminder */
 app.delete('/api/reminders/:id', (req, res) => {
   reminders.delete(req.params.id);
+  updateTags();
   saveData();
   res.json({ success: true });
 });
 
 // ============================================================================
-// API Routes - Subtasks
+// API Routes - Bulk Operations
 // ============================================================================
 
-/** POST /api/reminders/:id/subtasks - Add subtask */
-app.post('/api/reminders/:id/subtasks', (req, res) => {
-  const r = reminders.get(req.params.id);
-  if (!r) return res.status(404).json({ error: 'Not found' });
+app.post('/api/bulk', (req, res) => {
+  const { action, ids, folderId } = req.body;
   
-  const { title } = req.body;
-  if (!title || !title.trim()) {
-    return res.status(400).json({ error: 'Title required' });
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'No IDs provided' });
   }
   
-  const subtask = {
-    id: `${req.params.id}-sub-${r.subtasks.length}`,
-    title: title.trim(),
-    completed: false
-  };
+  let updated = 0;
   
-  r.subtasks.push(subtask);
-  saveData();
-  res.json(subtask);
-});
-
-/** PATCH /api/reminders/:id/subtasks/:subId - Update subtask */
-app.patch('/api/reminders/:id/subtasks/:subId', (req, res) => {
-  const r = reminders.get(req.params.id);
-  if (!r) return res.status(404).json({ error: 'Not found' });
+  ids.forEach(id => {
+    const r = reminders.get(id);
+    if (!r) return;
+    
+    switch (action) {
+      case 'complete':
+        r.completed = true;
+        r.completedAt = Date.now();
+        updated++;
+        break;
+      case 'uncomplete':
+        r.completed = false;
+        r.completedAt = null;
+        updated++;
+        break;
+      case 'delete':
+        reminders.delete(id);
+        updated++;
+        break;
+      case 'move':
+        if (folderId) {
+          r.folderId = folderId;
+          updated++;
+        }
+        break;
+    }
+  });
   
-  const subtask = r.subtasks.find(st => st.id === req.params.subId);
-  if (!subtask) return res.status(404).json({ error: 'Subtask not found' });
-  
-  const { title, completed } = req.body;
-  if (title !== undefined) subtask.title = title.trim();
-  if (completed !== undefined) subtask.completed = completed;
-  
-  // Auto-complete parent if all subtasks done
-  if (r.subtasks.length > 0 && r.subtasks.every(st => st.completed)) {
-    r.completed = true;
-    r.completedAt = Date.now();
+  if (updated > 0) {
+    updateTags();
+    saveData();
   }
   
-  saveData();
-  res.json(subtask);
+  res.json({ success: true, updated });
 });
 
-/** DELETE /api/reminders/:id/subtasks/:subId - Delete subtask */
-app.delete('/api/reminders/:id/subtasks/:subId', (req, res) => {
-  const r = reminders.get(req.params.id);
-  if (!r) return res.status(404).json({ error: 'Not found' });
+// ============================================================================
+// API Routes - Tags
+// ============================================================================
+
+app.get('/api/tags', (req, res) => {
+  updateTags();
+  const list = Array.from(tags.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({ name, count }));
+  res.json(list);
+});
+
+// ============================================================================
+// API Routes - Stats
+// ============================================================================
+
+app.get('/api/stats', (req, res) => {
+  const all = Array.from(reminders.values());
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
   
-  r.subtasks = r.subtasks.filter(st => st.id !== req.params.subId);
-  saveData();
-  res.json({ success: true });
+  updateTags();
+  
+  res.json({
+    total: all.length,
+    completed: all.filter(r => r.completed).length,
+    incomplete: all.filter(r => !r.completed).length,
+    dueToday: all.filter(r => {
+      if (r.completed || !r.dueDate) return false;
+      const due = new Date(r.dueDate);
+      return due >= now && due < tomorrow;
+    }).length,
+    overdue: all.filter(r => {
+      if (r.completed || !r.dueDate) return false;
+      const due = new Date(r.dueDate);
+      return due < now;
+    }).length,
+    highPriority: all.filter(r => !r.completed && r.priority === 'high').length,
+    tags: Array.from(tags.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10)
+  });
 });
 
 // ============================================================================
@@ -485,4 +701,6 @@ app.delete('/api/reminders/:id/subtasks/:subId', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Reminders app on port ${PORT}`);
+  // Initial tag update
+  updateTags();
 });
