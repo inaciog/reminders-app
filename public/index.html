@@ -524,6 +524,9 @@
     .modal-body {
       padding: 20px;
       overflow-y: auto;
+      max-height: calc(90vh - 140px);
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
 
     .form-group {
@@ -601,6 +604,10 @@
 
     .subtasks-list {
       margin-top: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
 
     .subtask-item {
@@ -1356,32 +1363,20 @@
       });
     });
 
-    // Prevent rubber band scrolling on iOS
-    document.addEventListener('touchmove', function(e) {
-      // Allow scrolling within scrollable containers
-      const scrollable = e.target.closest('.folders-section, .reminders-list, .modal-body');
-      if (scrollable) {
-        const isAtTop = scrollable.scrollTop === 0;
-        const isAtBottom = scrollable.scrollHeight - scrollable.scrollTop === scrollable.clientHeight;
-        const isScrollingUp = e.touches[0].clientY > (e.target.dataset.lastY || 0);
-        const isScrollingDown = e.touches[0].clientY < (e.target.dataset.lastY || 0);
-        
-        e.target.dataset.lastY = e.touches[0].clientY;
-        
-        // Prevent if at boundaries and trying to scroll beyond
-        if ((isAtTop && isScrollingUp) || (isAtBottom && isScrollingDown)) {
-          e.preventDefault();
-        }
-        return;
+    // Prevent rubber band scrolling on body only, allow in scrollable containers
+    document.body.addEventListener('touchmove', function(e) {
+      // Only prevent if not in a scrollable container
+      const scrollable = e.target.closest('.folders-section, .reminders-list, .modal-body, .subtasks-list');
+      if (!scrollable) {
+        e.preventDefault();
       }
-      // Prevent default on non-scrollable areas
-      e.preventDefault();
     }, { passive: false });
 
-    // Prevent pull-to-refresh
-    document.addEventListener('touchstart', function(e) {
+    // Prevent pull-to-refresh on body
+    let startY = 0;
+    document.body.addEventListener('touchstart', function(e) {
       if (e.touches.length === 1) {
-        e.target.dataset.startY = e.touches[0].clientY;
+        startY = e.touches[0].clientY;
       }
     }, { passive: true });
   </script>
