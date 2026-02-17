@@ -133,6 +133,48 @@ async function requireAuth(req, res, next) {
   }
 }
 
+// ============================================================================
+// Special endpoint for AI assistant to create reminders (NO AUTH REQUIRED)
+// ============================================================================
+
+const API_SECRET = process.env.API_SECRET || 'assistant-secret-key';
+
+app.post('/api/external/reminder', (req, res) => {
+  const { secret, title, notes = '', dueDate = null, priority = 'normal' } = req.body;
+  
+  if (secret !== API_SECRET) {
+    return res.status(401).json({ error: 'Invalid secret' });
+  }
+  
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'Title required' });
+  }
+  
+  const id = uuidv4().slice(0, 8);
+  const reminder = {
+    id,
+    title: title.trim(),
+    notes: notes.trim(),
+    folderId: 'inbox',
+    completed: false,
+    dueDate: dueDate ? new Date(dueDate).getTime() : null,
+    priority,
+    subtasks: [],
+    createdAt: Date.now(),
+    completedAt: null,
+    source: 'assistant'
+  };
+  
+  reminders.set(id, reminder);
+  saveData();
+  
+  res.json({ 
+    success: true, 
+    reminder,
+    url: `https://reminders-app.fly.dev/`
+  });
+});
+
 // Apply auth to all routes except static files
 app.use('/api', requireAuth);
 app.use('/', requireAuth, express.static('public'));
@@ -378,48 +420,6 @@ app.delete('/api/reminders/:id/subtasks/:subId', (req, res) => {
   r.subtasks = r.subtasks.filter(st => st.id !== req.params.subId);
   saveData();
   res.json({ success: true });
-});
-
-// ============================================================================
-// Special endpoint for AI assistant to create reminders
-// ============================================================================
-
-const API_SECRET = process.env.API_SECRET || 'assistant-secret-key';
-
-app.post('/api/external/reminder', (req, res) => {
-  const { secret, title, notes = '', dueDate = null, priority = 'normal' } = req.body;
-  
-  if (secret !== API_SECRET) {
-    return res.status(401).json({ error: 'Invalid secret' });
-  }
-  
-  if (!title || !title.trim()) {
-    return res.status(400).json({ error: 'Title required' });
-  }
-  
-  const id = uuidv4().slice(0, 8);
-  const reminder = {
-    id,
-    title: title.trim(),
-    notes: notes.trim(),
-    folderId: 'inbox',
-    completed: false,
-    dueDate: dueDate ? new Date(dueDate).getTime() : null,
-    priority,
-    subtasks: [],
-    createdAt: Date.now(),
-    completedAt: null,
-    source: 'assistant'
-  };
-  
-  reminders.set(id, reminder);
-  saveData();
-  
-  res.json({ 
-    success: true, 
-    reminder,
-    url: `https://reminders-app.fly.dev/`
-  });
 });
 
 // ============================================================================
