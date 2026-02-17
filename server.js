@@ -134,11 +134,12 @@ async function requireAuth(req, res, next) {
 }
 
 // ============================================================================
-// Special endpoint for AI assistant to create reminders (NO AUTH REQUIRED)
+// Special endpoints for AI assistant (NO AUTH REQUIRED)
 // ============================================================================
 
 const API_SECRET = process.env.API_SECRET || 'assistant-secret-key';
 
+// Create reminder
 app.post('/api/external/reminder', (req, res) => {
   const { secret, title, notes = '', dueDate = null, priority = 'normal' } = req.body;
   
@@ -172,6 +173,62 @@ app.post('/api/external/reminder', (req, res) => {
     success: true, 
     reminder,
     url: `https://reminders-app.fly.dev/`
+  });
+});
+
+// List all reminders
+app.get('/api/external/reminders', (req, res) => {
+  const { secret, folder, completed, today } = req.query;
+  
+  if (secret !== API_SECRET) {
+    return res.status(401).json({ error: 'Invalid secret' });
+  }
+  
+  let list = Array.from(reminders.values());
+  
+  // Filter by folder
+  if (folder) {
+    list = list.filter(r => r.folderId === folder);
+  }
+  
+  // Filter by completed status
+  if (completed !== undefined) {
+    const isCompleted = completed === 'true';
+    list = list.filter(r => r.completed === isCompleted);
+  }
+  
+  // Filter for today
+  if (today === 'true') {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    list = list.filter(r => {
+      if (r.completed) return false;
+      if (!r.dueDate) return false;
+      const due = new Date(r.dueDate);
+      return due >= now && due < tomorrow;
+    });
+  }
+  
+  // Sort: incomplete first, then by priority, then by due date
+  list.sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    if (a.priority !== b.priority) {
+      const p = { high: 0, normal: 1, low: 2 };
+      return p[a.priority] - p[b.priority];
+    }
+    if (a.dueDate && b.dueDate) return a.dueDate - b.dueDate;
+    if (a.dueDate) return -1;
+    if (b.dueDate) return 1;
+    return b.createdAt - a.createdAt;
+  });
+  
+  res.json({
+    success: true,
+    count: list.length,
+    reminders: list
   });
 });
 
