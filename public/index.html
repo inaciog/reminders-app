@@ -1190,7 +1190,7 @@
             type="text" 
             value="${escapeHtml(st.title)}" 
             placeholder="Subtask..."
-            onchange="updateSubtask(${i}, this.value)"
+            oninput="updateSubtask(${i}, this.value)"
           >
           <button class="subtask-delete" onclick="removeSubtask(${i})">×</button>
         </div>

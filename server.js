@@ -2,7 +2,7 @@
  * Reminders App - Server
  * 
  * A fast, elegant reminders system with folders and sub-tasks.
- * Uses in-memory storage for speed (data persists during session).
+ * Uses JSON file for persistent storage.
  * 
  * @author Inacio Bo
  * @license MIT
@@ -11,32 +11,66 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// Data file path
+const DATA_FILE = '/data/reminders.json';
+
+// In-memory storage
+let folders = new Map();
+let reminders = new Map();
+
+// Load data from file
+function loadData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      folders = new Map(data.folders || []);
+      reminders = new Map(data.reminders || []);
+      console.log('Data loaded from file');
+    }
+  } catch (err) {
+    console.error('Error loading data:', err);
+  }
+  
+  // Create default inbox if not exists
+  if (!folders.has('inbox')) {
+    folders.set('inbox', {
+      id: 'inbox',
+      name: 'Inbox',
+      color: '#007AFF',
+      icon: '📥',
+      createdAt: Date.now()
+    });
+    saveData();
+  }
+}
+
+// Save data to file
+function saveData() {
+  try {
+    const data = {
+      folders: Array.from(folders.entries()),
+      reminders: Array.from(reminders.entries())
+    };
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('Error saving data:', err);
+  }
+}
+
+// Load initial data
+loadData();
+
+// Auto-save every 30 seconds
+setInterval(saveData, 30000);
+
 // Middleware
 app.use(express.json());
 app.use(express.static('public'));
-
-// ============================================================================
-// Data Store
-// ============================================================================
-
-/** @type {Map<string, Folder>} */
-const folders = new Map();
-
-/** @type {Map<string, Reminder>} */
-const reminders = new Map();
-
-// Create default folder
-folders.set('inbox', {
-  id: 'inbox',
-  name: 'Inbox',
-  color: '#007AFF',
-  icon: '📥',
-  createdAt: Date.now()
-});
 
 // ============================================================================
 // API Routes - Folders
@@ -66,6 +100,7 @@ app.post('/api/folders', (req, res) => {
   };
   
   folders.set(id, folder);
+  saveData();
   res.json(folder);
 });
 
@@ -85,6 +120,7 @@ app.delete('/api/folders/:id', (req, res) => {
   });
   
   folders.delete(id);
+  saveData();
   res.json({ success: true });
 });
 
@@ -92,7 +128,7 @@ app.delete('/api/folders/:id', (req, res) => {
 // API Routes - Reminders
 // ============================================================================
 
-/** GET /api/reminders - List reminders (optionally filtered by folder) */
+/** GET /api/reminders - List reminders */
 app.get('/api/reminders', (req, res) => {
   const { folder, completed } = req.query;
   let list = Array.from(reminders.values());
@@ -106,9 +142,13 @@ app.get('/api/reminders', (req, res) => {
     list = list.filter(r => r.completed === isCompleted);
   }
   
-  // Sort: incomplete first, then by due date, then by creation date
+  // Sort
   list.sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    if (a.priority !== b.priority) {
+      const p = { high: 0, normal: 1, low: 2 };
+      return p[a.priority] - p[b.priority];
+    }
     if (a.dueDate && b.dueDate) return a.dueDate - b.dueDate;
     if (a.dueDate) return -1;
     if (b.dueDate) return 1;
@@ -138,9 +178,9 @@ app.get('/api/reminders/today', (req, res) => {
 
 /** GET /api/reminders/:id - Get single reminder */
 app.get('/api/reminders/:id', (req, res) => {
-  const reminder = reminders.get(req.params.id);
-  if (!reminder) return res.status(404).json({ error: 'Not found' });
-  res.json(reminder);
+  const r = reminders.get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Not found' });
+  res.json(r);
 });
 
 /** POST /api/reminders - Create new reminder */
@@ -150,7 +190,7 @@ app.post('/api/reminders', (req, res) => {
     notes = '', 
     folderId = 'inbox',
     dueDate = null,
-    priority = 'normal', // low, normal, high
+    priority = 'normal',
     subtasks = []
   } = req.body;
   
@@ -169,41 +209,52 @@ app.post('/api/reminders', (req, res) => {
     priority,
     subtasks: subtasks.map((st, i) => ({
       id: `${id}-sub-${i}`,
-      title: st.title || st,
+      title: st.title ? st.title.trim() : '',
       completed: st.completed || false
-    })),
+    })).filter(st => st.title),
     createdAt: Date.now(),
     completedAt: null
   };
   
   reminders.set(id, reminder);
+  saveData();
   res.json(reminder);
 });
 
 /** PATCH /api/reminders/:id - Update reminder */
 app.patch('/api/reminders/:id', (req, res) => {
-  const reminder = reminders.get(req.params.id);
-  if (!reminder) return res.status(404).json({ error: 'Not found' });
+  const r = reminders.get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Not found' });
   
-  const { title, notes, folderId, dueDate, priority, completed } = req.body;
+  const { title, notes, folderId, dueDate, priority, completed, subtasks } = req.body;
   
-  if (title !== undefined) reminder.title = title.trim();
-  if (notes !== undefined) reminder.notes = notes.trim();
-  if (folderId !== undefined) reminder.folderId = folderId;
-  if (dueDate !== undefined) reminder.dueDate = dueDate ? new Date(dueDate).getTime() : null;
-  if (priority !== undefined) reminder.priority = priority;
+  if (title !== undefined) r.title = title.trim();
+  if (notes !== undefined) r.notes = notes.trim();
+  if (folderId !== undefined) r.folderId = folderId;
+  if (dueDate !== undefined) r.dueDate = dueDate ? new Date(dueDate).getTime() : null;
+  if (priority !== undefined) r.priority = priority;
   
-  if (completed !== undefined && completed !== reminder.completed) {
-    reminder.completed = completed;
-    reminder.completedAt = completed ? Date.now() : null;
+  if (completed !== undefined && completed !== r.completed) {
+    r.completed = completed;
+    r.completedAt = completed ? Date.now() : null;
   }
   
-  res.json(reminder);
+  if (subtasks !== undefined) {
+    r.subtasks = subtasks.map((st, i) => ({
+      id: st.id || `${req.params.id}-sub-${i}`,
+      title: st.title ? st.title.trim() : '',
+      completed: st.completed || false
+    })).filter(st => st.title);
+  }
+  
+  saveData();
+  res.json(r);
 });
 
 /** DELETE /api/reminders/:id - Delete reminder */
 app.delete('/api/reminders/:id', (req, res) => {
   reminders.delete(req.params.id);
+  saveData();
   res.json({ success: true });
 });
 
@@ -213,8 +264,8 @@ app.delete('/api/reminders/:id', (req, res) => {
 
 /** POST /api/reminders/:id/subtasks - Add subtask */
 app.post('/api/reminders/:id/subtasks', (req, res) => {
-  const reminder = reminders.get(req.params.id);
-  if (!reminder) return res.status(404).json({ error: 'Not found' });
+  const r = reminders.get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Not found' });
   
   const { title } = req.body;
   if (!title || !title.trim()) {
@@ -222,21 +273,22 @@ app.post('/api/reminders/:id/subtasks', (req, res) => {
   }
   
   const subtask = {
-    id: `${reminder.id}-sub-${reminder.subtasks.length}`,
+    id: `${req.params.id}-sub-${r.subtasks.length}`,
     title: title.trim(),
     completed: false
   };
   
-  reminder.subtasks.push(subtask);
+  r.subtasks.push(subtask);
+  saveData();
   res.json(subtask);
 });
 
 /** PATCH /api/reminders/:id/subtasks/:subId - Update subtask */
 app.patch('/api/reminders/:id/subtasks/:subId', (req, res) => {
-  const reminder = reminders.get(req.params.id);
-  if (!reminder) return res.status(404).json({ error: 'Not found' });
+  const r = reminders.get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Not found' });
   
-  const subtask = reminder.subtasks.find(st => st.id === req.params.subId);
+  const subtask = r.subtasks.find(st => st.id === req.params.subId);
   if (!subtask) return res.status(404).json({ error: 'Subtask not found' });
   
   const { title, completed } = req.body;
@@ -244,20 +296,22 @@ app.patch('/api/reminders/:id/subtasks/:subId', (req, res) => {
   if (completed !== undefined) subtask.completed = completed;
   
   // Auto-complete parent if all subtasks done
-  if (reminder.subtasks.length > 0 && reminder.subtasks.every(st => st.completed)) {
-    reminder.completed = true;
-    reminder.completedAt = Date.now();
+  if (r.subtasks.length > 0 && r.subtasks.every(st => st.completed)) {
+    r.completed = true;
+    r.completedAt = Date.now();
   }
   
+  saveData();
   res.json(subtask);
 });
 
 /** DELETE /api/reminders/:id/subtasks/:subId - Delete subtask */
 app.delete('/api/reminders/:id/subtasks/:subId', (req, res) => {
-  const reminder = reminders.get(req.params.id);
-  if (!reminder) return res.status(404).json({ error: 'Not found' });
+  const r = reminders.get(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Not found' });
   
-  reminder.subtasks = reminder.subtasks.filter(st => st.id !== req.params.subId);
+  r.subtasks = r.subtasks.filter(st => st.id !== req.params.subId);
+  saveData();
   res.json({ success: true });
 });
 
@@ -274,37 +328,3 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Reminders app on port ${PORT}`);
 });
-
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
-/**
- * @typedef {Object} Folder
- * @property {string} id
- * @property {string} name
- * @property {string} color
- * @property {string} icon
- * @property {number} createdAt
- */
-
-/**
- * @typedef {Object} Subtask
- * @property {string} id
- * @property {string} title
- * @property {boolean} completed
- */
-
-/**
- * @typedef {Object} Reminder
- * @property {string} id
- * @property {string} title
- * @property {string} notes
- * @property {string} folderId
- * @property {boolean} completed
- * @property {number|null} dueDate
- * @property {string} priority
- * @property {Subtask[]} subtasks
- * @property {number} createdAt
- * @property {number|null} completedAt
- */
