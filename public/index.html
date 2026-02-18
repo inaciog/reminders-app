@@ -1168,7 +1168,13 @@
         populateFolderSelect();
       } catch (err) {
         console.error('Failed to load data:', err);
-        redirectToAuth();
+        // Only redirect on 401, not on other errors
+        if (err.message && err.message.includes('401')) {
+          redirectToAuth();
+        } else {
+          // Show error message instead of redirecting
+          console.log('Non-auth error, not redirecting');
+        }
       }
     }
 
