@@ -1691,23 +1691,38 @@
       }
 
       const headers = authHeaders();
+      console.log('Saving reminder:', reminder, 'with headers:', headers);
 
-      if (id) {
-        await fetch(`/api/reminders/${id}`, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify(reminder)
-        });
-      } else {
-        await fetch('/api/reminders', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(reminder)
-        });
+      try {
+        let response;
+        if (id) {
+          response = await fetch(`/api/reminders/${id}`, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify(reminder)
+          });
+        } else {
+          response = await fetch('/api/reminders', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(reminder)
+          });
+        }
+        
+        console.log('Save response:', response.status);
+        
+        if (!response.ok) {
+          console.error('Save failed:', response.status, await response.text());
+          alert('Failed to save reminder: ' + response.status);
+          return;
+        }
+
+        closeReminderModal();
+        await loadData();
+      } catch (err) {
+        console.error('Error saving reminder:', err);
+        alert('Error saving: ' + err.message);
       }
-
-      closeReminderModal();
-      await loadData();
     }
 
     async function deleteReminder() {
