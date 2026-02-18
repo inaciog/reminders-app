@@ -224,6 +224,20 @@ async function requireAuth(req, res, next) {
   }
 }
 
+// Health endpoint (no auth required)
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now() });
+});
+
+// Debug endpoint to check auth status (no auth required)
+app.get('/auth-debug', (req, res) => {
+  res.json({
+    hasToken: !!req.query.token,
+    hasCookie: !!req.cookies[COOKIE_NAME],
+    cookieValue: req.cookies[COOKIE_NAME] ? 'present' : 'missing'
+  });
+});
+
 // ============================================================================
 // Special endpoints for AI assistant (NO AUTH REQUIRED)
 // ============================================================================
@@ -426,9 +440,11 @@ app.post('/api/external/bulk', (req, res) => {
   res.json({ success: true, updated });
 });
 
-// Apply auth to all routes except static files
+// Apply auth to API routes only
 app.use('/api', requireAuth);
-app.use('/', requireAuth, express.static('public'));
+
+// Serve static files without auth - the client-side app will handle auth
+app.use(express.static('public'));
 
 // ============================================================================
 // API Routes - Folders
