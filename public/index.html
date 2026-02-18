@@ -1832,9 +1832,12 @@
       const urlToken = urlParams.get('token');
       const storedToken = localStorage.getItem('auth_token');
       
+      console.log('Auth check:', { hasUrlToken: !!urlToken, hasStoredToken: !!storedToken });
+      
       // If token in URL, store it
       if (urlToken) {
         localStorage.setItem('auth_token', urlToken);
+        console.log('Token stored from URL');
         // Remove token from URL
         window.history.replaceState({}, document.title, window.location.pathname);
       }
@@ -1844,8 +1847,11 @@
       
       // If no token at all, redirect to auth service immediately
       if (!window.AUTH_TOKEN) {
+        console.log('No token found, redirecting to auth...');
         const currentUrl = encodeURIComponent(window.location.href);
         window.location.href = `https://inacio-auth.fly.dev/login?returnTo=${currentUrl}`;
+      } else {
+        console.log('Token found, proceeding...');
       }
     })();
   </script>
