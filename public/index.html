@@ -1830,19 +1830,30 @@
     (function() {
       const urlParams = new URLSearchParams(window.location.search);
       const urlToken = urlParams.get('token');
-      const storedToken = localStorage.getItem('auth_token');
+      let storedToken = null;
+      
+      // Try to get from localStorage, but handle iOS private mode
+      try {
+        storedToken = localStorage.getItem('auth_token');
+      } catch (e) {
+        console.log('localStorage not available (private mode?)');
+      }
       
       console.log('Auth check:', { hasUrlToken: !!urlToken, hasStoredToken: !!storedToken });
       
       // If token in URL, store it
       if (urlToken) {
-        localStorage.setItem('auth_token', urlToken);
-        console.log('Token stored from URL');
-        // Remove token from URL
+        try {
+          localStorage.setItem('auth_token', urlToken);
+          console.log('Token stored from URL');
+        } catch (e) {
+          console.log('Could not store token in localStorage');
+        }
+        // Remove token from URL but keep it in memory
         window.history.replaceState({}, document.title, window.location.pathname);
       }
       
-      // Set token for API calls
+      // Set token for API calls - prefer URL token if just received
       window.AUTH_TOKEN = urlToken || storedToken;
       
       // If no token at all, redirect to auth service immediately

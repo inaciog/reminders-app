@@ -179,6 +179,14 @@ app.use(cookieParser());
 async function requireAuth(req, res, next) {
   let token = req.query.token || req.cookies[COOKIE_NAME] || req.headers.authorization?.replace('Bearer ', '');
   
+  console.log('Auth debug:', { 
+    path: req.path, 
+    hasQueryToken: !!req.query.token,
+    hasCookie: !!req.cookies[COOKIE_NAME],
+    hasAuthHeader: !!req.headers.authorization,
+    authHeader: req.headers.authorization?.substring(0, 20) + '...'
+  });
+  
   if (req.query.token && !req.cookies[COOKIE_NAME]) {
     res.cookie(COOKIE_NAME, req.query.token, {
       httpOnly: true,
@@ -190,6 +198,7 @@ async function requireAuth(req, res, next) {
   }
   
   if (!token) {
+    console.log('No token found, returning 401/redirect');
     if (req.path.startsWith('/api/')) {
       return res.status(401).json({ 
         error: 'Not authenticated',
